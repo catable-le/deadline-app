@@ -45,11 +45,11 @@ class TodoViewModel: ObservableObject {
         }
     }
 
-    func updateTask(_ task: Task, newFolderID: UUID) {
-        if let index = tasks.firstIndex(where: { $0.id == task.id }) {
-            var updatedTask = task
-            updatedTask.folderID = newFolderID
-            tasks[index] = updatedTask
+    func updateTask(_ updatedTask: Task, newFolderID: UUID) {
+        if let index = tasks.firstIndex(where: { $0.id == updatedTask.id }) {
+            var taskToUpdate = updatedTask
+            taskToUpdate.folderID = newFolderID
+            tasks[index] = taskToUpdate
         }
     }
 

@@ -1,9 +1,10 @@
 import SwiftUI
 
 struct TodoListView: View {
-    @StateObject private var viewModel = TodoViewModel()
+    @EnvironmentObject var viewModel: TodoViewModel
     @State private var showingAddSheet = false
     @State private var addType: AddType = .task
+    @State private var selectedTaskID: UUID? = nil  // 全局选择状态
 
     enum AddType {
         case task
@@ -35,8 +36,9 @@ struct TodoListView: View {
                         ) {
                             ForEach(viewModel.folders) { folder in
                                 FolderView(
-                                    folder: folder, count: viewModel.countTasksInFolder(folder),
-                                    viewModel: viewModel)
+                                    folder: folder, count: viewModel.countTasksInFolder(folder)
+                                )
+                                .environmentObject(viewModel)
                             }
                         }
                         .padding(.horizontal)
@@ -47,9 +49,19 @@ struct TodoListView: View {
                                 TaskRowView(
                                     task: task,
                                     folder: viewModel.folder(for: task),
+                                    isSelected: selectedTaskID == task.id,
                                     onToggle: {
                                         viewModel.toggleTask(task)
-                                    })
+                                    },
+                                    onSelect: { taskID in
+                                        if selectedTaskID == taskID {
+                                            selectedTaskID = nil  // 取消选择
+                                        } else {
+                                            selectedTaskID = taskID  // 选择新任务
+                                        }
+                                    }
+                                )
+                                .environmentObject(viewModel)
                             }
                         }
                         .padding(.horizontal)
@@ -91,10 +103,14 @@ struct TodoListView: View {
                 }
             }
             .sheet(isPresented: $showingAddSheet) {
-                if addType == .task {
-                    AddTaskView(viewModel: viewModel)
-                } else {
-                    AddFolderView(viewModel: viewModel)
+                Group {
+                    if addType == .task {
+                        AddTaskView(viewModel: viewModel)
+                            .environmentObject(viewModel)
+                    } else {
+                        AddFolderView(viewModel: viewModel)
+                            .environmentObject(viewModel)
+                    }
                 }
             }
             .alert("Delete Folder", isPresented: $viewModel.showingDeleteConfirmation) {
@@ -117,7 +133,7 @@ struct TodoListView: View {
 struct FolderView: View {
     let folder: Folder
     let count: Int
-    @ObservedObject var viewModel: TodoViewModel
+    @EnvironmentObject var viewModel: TodoViewModel
     @State private var isShowingDetail = false
     @State private var dragOffset = CGSize.zero
     @GestureState private var isLongPressed = false
@@ -150,15 +166,17 @@ struct FolderView: View {
                         .onChanged { gesture in
                             if isLongPressed {
                                 dragOffset = gesture.translation
-                                // Show trash can when dragging
                                 viewModel.folderToDelete = folder
                             }
                         }
                         .onEnded { gesture in
                             dragOffset = .zero
-                            // Check if dragged to trash can position
-                            if gesture.translation.height > 100 {
-                                viewModel.showingDeleteConfirmation = true
+                            if abs(gesture.translation.width) > 50
+                                || abs(gesture.translation.height) > 50
+                            {
+                                if viewModel.folderToDelete != nil {
+                                    viewModel.showingDeleteConfirmation = true
+                                }
                             } else {
                                 viewModel.folderToDelete = nil
                             }
@@ -169,39 +187,70 @@ struct FolderView: View {
         }
         .sheet(isPresented: $isShowingDetail) {
             NavigationView {
-                FolderDetailView(folder: folder, viewModel: viewModel)
+                FolderDetailView(folder: folder)
+                    .environmentObject(viewModel)
             }
         }
     }
 }
 
 struct TaskRowView: View {
-    let task: Task
+    @State var task: Task
     let folder: Folder
+    let isSelected: Bool
     let onToggle: () -> Void
+    let onSelect: (UUID) -> Void
+    @EnvironmentObject var viewModel: TodoViewModel
+
     @State private var isShowingDetail = false
-    @State private var isSelected = false
+    @State private var editingTitle: String = ""
+    @FocusState private var isTitleFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Button(action: onToggle) {
+                // Task completion button
+                Button(action: {
+                    onToggle()
+                    // 更新本地状态以立即反映变化
+                    task.isCompleted.toggle()
+                }) {
                     Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
                         .foregroundColor(task.isCompleted ? .green : .gray)
+                        .font(.system(size: 20))
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(task.title)
-                        .strikethrough(task.isCompleted)
-                        .foregroundColor(task.isCompleted ? .gray : .primary)
-                        .onTapGesture {
-                            isSelected.toggle()
-                        }
+                    if isSelected && isTitleFocused {
+                        TextField(
+                            "Task Title", text: $editingTitle,
+                            onCommit: {
+                                var updatedTask = task
+                                updatedTask.title = editingTitle
+                                viewModel.updateTask(updatedTask, newFolderID: task.folderID)
+                                self.task.title = editingTitle
+                                isTitleFocused = false
+                            }
+                        )
+                        .focused($isTitleFocused)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    } else {
+                        Text(task.title)
+                            .strikethrough(task.isCompleted)
+                            .foregroundColor(task.isCompleted ? .gray : .primary)
+                            .onTapGesture {
+                                onSelect(task.id)
+                                if isSelected {
+                                    editingTitle = task.title
+                                    isTitleFocused = true
+                                }
+                            }
+                    }
 
                     if isSelected && !task.description.isEmpty {
                         Text(task.description)
                             .font(.caption)
-                            .foregroundColor(.black)
+                            .foregroundColor(.secondary)
                     }
 
                     HStack(spacing: 8) {
@@ -213,7 +262,7 @@ struct TaskRowView: View {
                             .foregroundColor(folder.color)
                             .cornerRadius(4)
 
-                        if task.deadline != Date() {
+                        if task.deadline.timeIntervalSince1970 > Date().timeIntervalSince1970 {
                             Text(task.deadline, style: .date)
                                 .font(.caption)
                                 .foregroundColor(.gray)
@@ -226,17 +275,34 @@ struct TaskRowView: View {
 
                 Spacer()
 
-                Button(action: {
-                    isShowingDetail = true
-                }) {
-                    Image(systemName: "info.circle")
-                        .foregroundColor(.blue)
+                if isSelected {
+                    Button(action: {
+                        isShowingDetail = true
+                    }) {
+                        Image(systemName: "info.circle")
+                            .foregroundColor(.blue)
+                            .font(.system(size: 20))
+                    }
                 }
             }
         }
         .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !isTitleFocused {
+                onSelect(task.id)
+            }
+        }
         .sheet(isPresented: $isShowingDetail) {
-            TaskDetailView(task: task, folder: folder)
+            NavigationView {
+                TaskDetailView(task: task, initialFolderId: task.folderID)
+                    .environmentObject(viewModel)
+            }
+        }
+        .onChange(of: isSelected) { newValue in
+            if !newValue {
+                isTitleFocused = false
+            }
         }
     }
 }
@@ -244,53 +310,72 @@ struct TaskRowView: View {
 struct TaskDetailView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var viewModel: TodoViewModel
-    @State private var editedTask: Task
-    @State private var selectedFolderID: UUID
 
-    init(task: Task, folder: Folder) {
+    @State var editedTask: Task
+    @State var selectedFolderID: UUID
+
+    private var initialTaskState: Task
+    private var initialSelectedFolderID: UUID
+
+    init(task: Task, initialFolderId: UUID) {
         _editedTask = State(initialValue: task)
-        _selectedFolderID = State(initialValue: folder.id)
+        _selectedFolderID = State(initialValue: initialFolderId)
+        self.initialTaskState = task
+        self.initialSelectedFolderID = initialFolderId
+    }
+
+    var hasChanges: Bool {
+        return editedTask.description != initialTaskState.description
+            || editedTask.deadline != initialTaskState.deadline
+            || selectedFolderID != initialSelectedFolderID
+            || editedTask.title != initialTaskState.title
     }
 
     var body: some View {
-        NavigationView {
-            Form {
-                Section(header: Text("Task Details")) {
-                    TextField("Description", text: $editedTask.description)
-                }
+        Form {
+            Section(header: Text("Task Title")) {
+                TextField("Title", text: $editedTask.title)
+            }
+            Section(header: Text("Task Details")) {
+                TextField("Description", text: $editedTask.description)
+            }
 
-                Section(header: Text("Folder")) {
-                    Picker("Select Folder", selection: $selectedFolderID) {
-                        ForEach(viewModel.folders) { folder in
-                            Text(folder.name)
-                                .tag(folder.id)
-                        }
+            Section(header: Text("Folder")) {
+                Picker("Select Folder", selection: $selectedFolderID) {
+                    ForEach(viewModel.folders) { folder in
+                        Text(folder.name)
+                            .tag(folder.id)
                     }
                 }
-
-                Section(header: Text("Deadline")) {
-                    DatePicker(
-                        "Select Date",
-                        selection: $editedTask.deadline,
-                        displayedComponents: [.date, .hourAndMinute]
-                    )
+                .onChange(of: selectedFolderID) { newValue in
+                    // Picker onChange to handle selection
                 }
             }
-            .navigationTitle("Edit Task")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        viewModel.updateTask(editedTask, newFolderID: selectedFolderID)
-                        dismiss()
-                    }
+            Section(header: Text("Deadline")) {
+                DatePicker(
+                    "Select Date",
+                    selection: $editedTask.deadline,
+                    displayedComponents: [.date, .hourAndMinute]
+                )
+            }
+        }
+        .navigationTitle("Edit Task")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    dismiss()
                 }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    var taskToUpdate = editedTask
+                    taskToUpdate.folderID = selectedFolderID
+                    viewModel.updateTask(taskToUpdate, newFolderID: selectedFolderID)
+                    dismiss()
+                }
+                .disabled(!hasChanges)
             }
         }
     }
