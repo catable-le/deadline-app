@@ -20,7 +20,8 @@ struct FolderDetailView: View {
                         .bold()
                         .foregroundColor(folder.color)
                     Spacer()
-                    Text("\(viewModel.countTasksInFolder(folder))")
+                    let taskCount = viewModel.countTasksInFolder(folder)
+                    Text("\(taskCount)")
                         .font(.title)
                         .bold()
                         .foregroundColor(folder.color)
@@ -29,7 +30,8 @@ struct FolderDetailView: View {
 
                 // Tasks list
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(viewModel.tasksForFolder(folder)) { task in
+                    let folderTasks = viewModel.tasksForFolder(folder)
+                    ForEach(folderTasks) { task in
                         TaskRowView(
                             task: task,
                             folder: folder,
@@ -38,11 +40,10 @@ struct FolderDetailView: View {
                                 viewModel.toggleTask(task)
                             },
                             onSelect: { taskID in
-                                if selectedTaskID == taskID {
-                                    selectedTaskID = nil
-                                } else {
-                                    selectedTaskID = taskID
-                                }
+                                selectedTaskID = (selectedTaskID == taskID) ? nil : taskID
+                            },
+                            onTaskUpdate: { updatedTask in
+                                viewModel.updateTask(updatedTask, newFolderID: updatedTask.folderID)
                             }
                         )
                         .environmentObject(viewModel)

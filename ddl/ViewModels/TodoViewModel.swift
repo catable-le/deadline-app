@@ -47,9 +47,12 @@ class TodoViewModel: ObservableObject {
 
     func updateTask(_ updatedTask: Task, newFolderID: UUID) {
         if let index = tasks.firstIndex(where: { $0.id == updatedTask.id }) {
-            var taskToUpdate = updatedTask
-            taskToUpdate.folderID = newFolderID
-            tasks[index] = taskToUpdate
+            // 完整更新任务的所有字段
+            tasks[index].title = updatedTask.title
+            tasks[index].description = updatedTask.description
+            tasks[index].deadline = updatedTask.deadline
+            tasks[index].folderID = newFolderID
+            tasks[index].isCompleted = updatedTask.isCompleted
         }
     }
 

@@ -16,14 +16,33 @@ struct TodoListView: View {
             ZStack {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        // Today's date header
+                        // Today's date header with add button
                         HStack {
-                            Text("Today")
-                                .font(.largeTitle)
-                                .bold()
-                            Text(Date(), style: .date)
-                                .font(.title2)
-                                .foregroundColor(.gray)
+                            VStack(alignment: .leading) {
+                                Text("Today")
+                                    .font(.largeTitle)
+                                    .bold()
+                                Text(Date(), style: .date)
+                                    .font(.title2)
+                                    .foregroundColor(.gray)
+                            }
+
+                            Spacer()
+
+                            Menu {
+                                Button("Add Task") {
+                                    addType = .task
+                                    showingAddSheet = true
+                                }
+
+                                Button("Add Folder") {
+                                    addType = .folder
+                                    showingAddSheet = true
+                                }
+                            } label: {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.system(size: 24))
+                            }
                         }
                         .padding(.horizontal)
 
@@ -54,11 +73,11 @@ struct TodoListView: View {
                                         viewModel.toggleTask(task)
                                     },
                                     onSelect: { taskID in
-                                        if selectedTaskID == taskID {
-                                            selectedTaskID = nil  // 取消选择
-                                        } else {
-                                            selectedTaskID = taskID  // 选择新任务
-                                        }
+                                        selectedTaskID = (selectedTaskID == taskID) ? nil : taskID
+                                    },
+                                    onTaskUpdate: { updatedTask in
+                                        viewModel.updateTask(
+                                            updatedTask, newFolderID: updatedTask.folderID)
                                     }
                                 )
                                 .environmentObject(viewModel)
@@ -66,6 +85,10 @@ struct TodoListView: View {
                         }
                         .padding(.horizontal)
                     }
+                }
+                .onTapGesture {
+                    // 点击空白处取消选择
+                    selectedTaskID = nil
                 }
 
                 // Trash can overlay
@@ -79,38 +102,14 @@ struct TodoListView: View {
                     }
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button(action: {
-                            addType = .task
-                            showingAddSheet = true
-                        }) {
-                            Label("Add Task", systemImage: "checklist")
-                        }
-
-                        Button(action: {
-                            addType = .folder
-                            showingAddSheet = true
-                        }) {
-                            Label("Add Folder", systemImage: "folder.badge.plus")
-                        }
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 24))
-                    }
-                }
-            }
+            .navigationBarHidden(true)
             .sheet(isPresented: $showingAddSheet) {
-                Group {
-                    if addType == .task {
-                        AddTaskView(viewModel: viewModel)
-                            .environmentObject(viewModel)
-                    } else {
-                        AddFolderView(viewModel: viewModel)
-                            .environmentObject(viewModel)
-                    }
+                if addType == .task {
+                    AddTaskView(viewModel: viewModel)
+                        .environmentObject(viewModel)
+                } else if addType == .folder {
+                    AddFolderView(viewModel: viewModel)
+                        .environmentObject(viewModel)
                 }
             }
             .alert("Delete Folder", isPresented: $viewModel.showingDeleteConfirmation) {
@@ -200,11 +199,10 @@ struct TaskRowView: View {
     let isSelected: Bool
     let onToggle: () -> Void
     let onSelect: (UUID) -> Void
+    let onTaskUpdate: (Task) -> Void
     @EnvironmentObject var viewModel: TodoViewModel
 
     @State private var isShowingDetail = false
-    @State private var editingTitle: String = ""
-    @FocusState private var isTitleFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -212,7 +210,7 @@ struct TaskRowView: View {
                 // Task completion button
                 Button(action: {
                     onToggle()
-                    // 更新本地状态以立即反映变化
+                    // 立即更新本地状态以提供视觉反馈
                     task.isCompleted.toggle()
                 }) {
                     Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
@@ -221,31 +219,12 @@ struct TaskRowView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    if isSelected && isTitleFocused {
-                        TextField(
-                            "Task Title", text: $editingTitle,
-                            onCommit: {
-                                var updatedTask = task
-                                updatedTask.title = editingTitle
-                                viewModel.updateTask(updatedTask, newFolderID: task.folderID)
-                                self.task.title = editingTitle
-                                isTitleFocused = false
-                            }
-                        )
-                        .focused($isTitleFocused)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                    } else {
-                        Text(task.title)
-                            .strikethrough(task.isCompleted)
-                            .foregroundColor(task.isCompleted ? .gray : .primary)
-                            .onTapGesture {
-                                onSelect(task.id)
-                                if isSelected {
-                                    editingTitle = task.title
-                                    isTitleFocused = true
-                                }
-                            }
-                    }
+                    Text(task.title)
+                        .strikethrough(task.isCompleted)
+                        .foregroundColor(task.isCompleted ? .gray : .primary)
+                        .onTapGesture {
+                            onSelect(task.id)
+                        }
 
                     if isSelected && !task.description.isEmpty {
                         Text(task.description)
@@ -287,21 +266,18 @@ struct TaskRowView: View {
             }
         }
         .padding(.vertical, 8)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !isTitleFocused {
-                onSelect(task.id)
-            }
-        }
         .sheet(isPresented: $isShowingDetail) {
             NavigationView {
-                TaskDetailView(task: task, initialFolderId: task.folderID)
-                    .environmentObject(viewModel)
-            }
-        }
-        .onChange(of: isSelected) { newValue in
-            if !newValue {
-                isTitleFocused = false
+                TaskDetailView(
+                    task: task,
+                    initialFolderId: task.folderID,
+                    onSave: { updatedTask in
+                        onTaskUpdate(updatedTask)
+                        // 更新本地task
+                        task = updatedTask
+                    }
+                )
+                .environmentObject(viewModel)
             }
         }
     }
@@ -316,12 +292,14 @@ struct TaskDetailView: View {
 
     private var initialTaskState: Task
     private var initialSelectedFolderID: UUID
+    let onSave: (Task) -> Void
 
-    init(task: Task, initialFolderId: UUID) {
+    init(task: Task, initialFolderId: UUID, onSave: @escaping (Task) -> Void) {
         _editedTask = State(initialValue: task)
         _selectedFolderID = State(initialValue: initialFolderId)
         self.initialTaskState = task
         self.initialSelectedFolderID = initialFolderId
+        self.onSave = onSave
     }
 
     var hasChanges: Bool {
@@ -337,7 +315,8 @@ struct TaskDetailView: View {
                 TextField("Title", text: $editedTask.title)
             }
             Section(header: Text("Task Details")) {
-                TextField("Description", text: $editedTask.description)
+                TextField("Description", text: $editedTask.description, axis: .vertical)
+                    .lineLimit(3...6)
             }
 
             Section(header: Text("Folder")) {
@@ -346,9 +325,6 @@ struct TaskDetailView: View {
                         Text(folder.name)
                             .tag(folder.id)
                     }
-                }
-                .onChange(of: selectedFolderID) { newValue in
-                    // Picker onChange to handle selection
                 }
             }
 
@@ -370,9 +346,10 @@ struct TaskDetailView: View {
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") {
+                    // 确保所有更改都被保存
                     var taskToUpdate = editedTask
                     taskToUpdate.folderID = selectedFolderID
-                    viewModel.updateTask(taskToUpdate, newFolderID: selectedFolderID)
+                    onSave(taskToUpdate)
                     dismiss()
                 }
                 .disabled(!hasChanges)
