@@ -112,6 +112,12 @@ struct TodoListView: View {
                         .environmentObject(viewModel)
                 }
             }
+            .onChange(of: addType) { _ in
+                showingAddSheet = false
+                DispatchQueue.main.async {
+                    showingAddSheet = true
+                }
+            }
             .alert("Delete Folder", isPresented: $viewModel.showingDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {
                     viewModel.folderToDelete = nil
